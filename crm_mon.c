@@ -1844,8 +1844,14 @@ crm_smtp_debug(const char *buf, int buflen, int writing, void *arg)
 #endif
 
 
+/*
+
+
+// this function is used to pass custom infomation to external program
+// just for test
+
 static int
-send_custom_name(const char *name)
+send_custom_string(const char *name)
 {
     pid_t pid;
     char env_name[200];
@@ -1859,15 +1865,27 @@ send_custom_name(const char *name)
         crm_perror(LOG_ERR, "notification fork() failed.");
     }
     if (pid == 0) {
-        /* crm_debug("notification: I am the child. Executing the nofitication program."); */
+        crm_debug("notification: I am the child. Executing the nofitication program."); 
         execl(external_agent, external_agent, NULL);
     }
     return 0;
 }
 
+*/
+
 /*
+
+// since we don't konw the format of pacemaker's messages
+// use this function to write the msg as a xml file
+// 
+// to fixed:
+//     every time I use xmlSaveFormatFileEnc, will revice a coredump
+//     who can help me fixed it?
+//     (become the coredump procedure is child procefure, so it work well so far)
+
+
 static int
-send_custom_trap_klwang(xmlNode * msg)
+send_custom_trap_dump_msg(xmlNode * msg)
 {
     pid_t pid;
 
@@ -2109,29 +2127,32 @@ send_node_state_trap(xmlNode * rsc_op)
 
     state = crm_element_value(rsc_op, XML_NODE_IS_PEER);
    
-
     crm_debug("Sending external notification to '%s' via '%s'", external_recipient, external_agent);
 
-    setenv("CRM_notify_klwang_recipient", external_recipient, 1);
-    setenv("CRM_notify_klwang_node", node, 1);
-    setenv("CRM_notify_klwang_task", "node_state", 1);
-    setenv("CRM_notify_klwang_state", state, 1);
+    if (state != NULL){
+        setenv("CRM_notify_state_recipient", external_recipient, 1);
+        setenv("CRM_notify_state_node", node, 1);
+        setenv("CRM_notify_state_task", "node_state", 1);
+        setenv("CRM_notify_state_state", state, 1);
 
-    pid = fork();
-    if (pid == -1) {
-        crm_perror(LOG_ERR, "notification fork() failed.");
+        pid = fork();
+        if (pid == -1) {
+            crm_perror(LOG_ERR, "notification fork() failed.");
+        }
+        if (pid == 0) {
+            /* crm_debug("notification: I am the child. Executing the nofitication program."); */
+            execl(external_agent, external_agent, NULL);
+        }
+
+        // crm_mon use environment Variables to pass infomation
+        // it's import to delete old infomation
+        // to aviding report many times
+ 
+        unsetenv("CRM_notify_state_recipient");
+        unsetenv("CRM_notify_state_node");
+        unsetenv("CRM_notify_state_task");
+        unsetenv("CRM_notify_state_state");
     }
-    if (pid == 0) {
-        /* crm_debug("notification: I am the child. Executing the nofitication program."); */
-        execl(external_agent, external_agent, NULL);
-    }
-
-    unsetenv("CRM_notify_klwang_recipient");
-    unsetenv("CRM_notify_klwang_node");
-    unsetenv("CRM_notify_klwang_task");
-    unsetenv("CRM_notify_klwang_state");
-
-
     return 0;
 }
 
@@ -2278,17 +2299,17 @@ crm_diff_update(const char *event, xmlNode * msg)
             const char *notify_type = crm_element_value(msg, F_CIB_OBJTYPE);
             if (strcmp(notify_type, XML_CIB_TAG_STATE) == 0){
 
-                //send_custom_trap_klwang(msg);
+                //send_custom_trap_dump_msg(msg);
                 xpathObj =
                     xpath_search(msg,
                                  "//" F_CIB_UPDATE "//" XML_CIB_TAG_STATE);
                 if (xpathObj && xpathObj->nodesetval->nodeNr > 0) {
                     int lpc = 0, max = xpathObj->nodesetval->nodeNr;
-                    send_custom_name(crm_itoa(max));
+                //send_custom_string(crm_itoa(max));
                     for (lpc = 0; lpc < max; lpc++) {
-                        xmlNode *rsc_xx = getXpathResult(xpathObj, lpc);
+                        xmlNode *rsc_state = getXpathResult(xpathObj, lpc);
 
-                        send_node_state_trap(rsc_xx);
+                        send_node_state_trap(rsc_state);
                     }
                 }
                 if (xpathObj) {
