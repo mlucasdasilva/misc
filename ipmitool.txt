@@ -1,0 +1,112 @@
+ipmitool使用小记
+
+
+集群中需要使用fence，最容易使用、最常见的就是fence_ipmilan了，在配置fence_ipmilan之前，最好使用ipmitool测试一下
+
+下面列出常用的ipmitool命令
+
+加载动态库文件
+
+	安装完成 ipmitool ，使用ipmitool之前，需要先加载相关的动态库文件；
+    为了保证每次开机都能自动加载，可以将加载设置为开机启动进行
+
+	cat /etc/sysconfig/modules/ipmi.modules 
+	modprobe ipmi_devintf
+	modprobe ipmi_watchdog
+	modprobe ipmi_poweroff
+
+
+关于通道号
+
+	各个机器的通道号不一定相同，目前还不知道怎么可以确定通道号，谁知道可以告诉我一下
+	机只能一个一个试了(从1开始，2、3、4。。。)
+    下面的例子，假设通道号是 1 
+
+查看用户
+
+	ipmitool user list 1
+	ID  Name	     Callin  Link Auth	IPMI Msg   Channel Priv Limit
+	1                    true    false      true       ADMINISTRATOR
+	2   ADMIN            true    false      true       ADMINISTRATOR
+	3   root             true    false      true       ADMINISTRATOR
+
+修改用户名
+
+	ipmitool user set name 3 nobody
+	ipmitool user list 1
+	1                    true    false      true       ADMINISTRATOR
+	2   ADMIN            true    false      true       ADMINISTRATOR
+	3   nobody           true    false      true       ADMINISTRATOR
+
+修改用户密码
+
+	ipmitool user set password 3 xyz12345
+
+查看网络信息
+
+	ipmitool lan print 1
+	IP Address Source       : DHCP Address
+	IP Address              : 192.168.1.33
+	Subnet Mask             : 255.255.240.0
+	Default Gateway IP      : 192.168.0.245
+
+设置ip地址来源
+
+	ipmitool lan set 1 ipsrc static
+
+    none， static等
+
+设置ip地址
+	ipmitool lan set 1 ipaddress 172.16.1.1
+	Setting LAN IP Address to 172.16.1.1
+
+    ipmitool lan set 1 netmask 255.255.255.0
+	Setting LAN Subnet Mask to 255.255.255.0
+
+    ipmitool lan set 1 defgw ipaddr 172.16.1.254
+	Setting LAN Default Gateway IP to 172.16.1.254
+
+    ipmitool lan print 1
+	IP Address Source       : DHCP Address
+	IP Address              : 172.16.1.1
+	Subnet Mask             : 172.16.1.1
+	Default Gateway IP      : 172.16.1.1
+
+改变服务器引导方式
+
+	ipmitool chassis bootdev
+	bootdev <device> [clear-cmos=yes|no]
+	bootdev <device> [options=help,...]
+	  none  : Do not change boot device order
+	  pxe   : Force PXE boot
+	  disk  : Force boot from default Hard-drive
+	  safe  : Force boot from default Hard-drive, request Safe Mode
+	  diag  : Force boot from Diagnostic Partition
+	  cdrom : Force boot from CD/DVD
+	  bios  : Force boot into BIOS Setup
+	  floppy: Force boot from Floppy/primary removable media
+
+	可以看到， 服务器的引导方式可以被改为好多种选择, 最常用的  cdrom， pex, disk等
+
+电源管理
+
+	ipmitool chassis power 
+	chassis power Commands: status, on, off, cycle, reset, diag, soft
+
+	最常用的就是 on、off、reset啦
+    fence_ipmi就是使用这种方式来工作的
+ 	ipmitool power 是 ipmitool chassis power 的快捷方式
+ 
+进入交互式模式
+
+	ipmitool shell
+
+远程操作
+
+    ipmitool -I lan -H 172.168.1.33 -U ADMIN -P xyz12345 power reset
+
+    -I 表示使用的方式，有很多种，其中：
+        open 是默认的本地操作
+        lan 是远程操作
+
+    除了 -I 和 -H 操作外，其他的命令和本地都是一样的

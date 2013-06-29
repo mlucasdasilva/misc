@@ -1,0 +1,84 @@
+cman + pacemaker集群中使用ipmilan实现fence
+
+本文假设读者已经清楚ipmilan设备的使用，如有困难，可以参考另外一篇博文 <ipmitool tips>
+
+pacemaker 的经典文章 cluster from stach 中，为了使用 gfs 文件系统，引入了 cman 作为底层的通信层
+
+在此种架构中使用ipmilan设备实现fence的方式有两种：
+
+    1. 在底层(cman)实现
+    2. 在pacemaker中实现
+
+具体由那种方式来实现是很值得思考的问题
+
+    1. gfs、dlm锁等都是由底层的cman来实现的；
+    2. 调度由上层的pacemaker实现
+    3. 我们的核心目的是保证gfs上的数据安全
+    
+由此得知，最好的方式就是使用底层cman来实现了，因为如果配置在pacemaker层，等到pacemaker发出fence指令的时候，可能你的数据就已经完蛋了
+
+下面，简要的列举一下cman中配置ipmilan的步骤和方式：
+
+假设集群中有3个节点，叫 node1, node2, node3
+
+添加集群中的fence设备
+
+    ccs -f cluster.conf --addfencedev fence-node1 agent=fence_ipmilan ipaddr=10.0.1.1 login=ADMIN passwd=xyz12345
+    ccs -f cluster.conf --addfencedev fence-node1 agent=fence_ipmilan ipaddr=10.0.1.2 login=ADMIN passwd=xyz12345
+    ccs -f cluster.conf --addfencedev fence-node1 agent=fence_ipmilan ipaddr=10.0.1.3 login=ADMIN passwd=xyz12345
+    
+为每个节点添加fence方法
+
+    ccs -f cluster.conf --addmethod ipmi node1
+    ccs -f cluster.conf --addmethod ipmi node2
+    ccs -f cluster.conf --addmethod ipmi node3
+
+设置每个节点可用的fence方式
+
+    ccs -f cluster.conf --addfenceinst fence-node1 node1 ipmi
+    ccs -f cluster.conf --addfenceinst fence-node2 node2 ipmi
+    ccs -f cluster.conf --addfenceinst fence-node3 node3 ipmi
+
+ok，最终的配置文件如下
+
+    <cluster config_version="22" name="mycluster">
+      <fence_daemon/>
+      <clusternodes>
+        <clusternode name="node1" nodeid="1">
+          <fence>
+            <method name="ipmi">
+              <device name="fence-node1"/>
+            </method>
+          </fence>
+        </clusternode>
+        <clusternode name="node2" nodeid="2">
+          <fence>
+            <method name="ipmi">
+              <device name="fence-node2"/>
+            </method>
+          </fence>
+        </clusternode>
+        <clusternode name="node3" nodeid="3">
+          <fence>
+            <method name="ipmi">
+              <device name="fence-node3"/>
+            </method>
+          </fence>
+        </clusternode>
+      </clusternodes>
+      <fencedevices>
+        <fencedevice agent="fence_ipmilan" ipaddr="10.0.1.1" login="ADMIN" name="fence-node1" passwd="xyz12345"/>
+        <fencedevice agent="fence_ipmilan" ipaddr="10.0.1.2" login="ADMIN" name="fence-node2" passwd="xyz12345"/>
+        <fencedevice agent="fence_ipmilan" ipaddr="10.0.1.3" login="ADMIN" name="fence-node3" passwd="xyz12345"/>
+      </fencedevices>
+    </cluster>
+
+现在，整个集群的fence已经可以使用了，如果不信，可以将某台机器的心跳网段ip down掉试试
+
+注意：
+
+ipmilan使用网卡实现，要求是只要相关网卡的物理链接存在即可，操作系统层面不设置ip也可以工作
+
+为了保护数据安全，集群中第一台机器在启动的时候，会自动fence掉其他所有机器，这也许是一个让我们很纠结的问题，可以设置下面的参数来放弃这种特性
+
+    <fence_daemon clean_start="1"/>

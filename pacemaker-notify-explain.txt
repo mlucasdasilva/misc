@@ -1,0 +1,107 @@
+pacemaker 集群通知机制深度解析
+
+pacemker 的 crm_mon 在后台启动时，可以使用 external-agent 选项来人为指定当发生集群事件时采取的动作
+
+在调用 external-agent 时， crm_mon 传递了以下几个环境变量
+
+    CRM_notify_recipient
+    CRM_notify_node
+    CRM_notify_rsc
+    CRM_notify_task
+    CRM_notify_desc
+    CRM_notify_rc
+    CRM_notify_target_rc
+    CRM_notify_status
+	
+这是怎么实现的呢？
+
+如下，pacemaker在集群时间发生时，会发送message的方式通知所有节点，默认的消息格式如下：(其中省略了若干不相关的信息)
+
+    <notify cib_object_type="diff">
+      <cib_generation>
+        <generation_tuple/>
+      </cib_generation>
+      <cib_update_result>
+        <diff>
+          <diff-removed>
+            <cib>
+              <status>
+                <node_state>
+                  <lrm id="node2">
+                    <lrm_resources>
+                      <lrm_resource id="dbfs" type="Filesystem" class="ocf" provider="heartbeat">
+                        <lrm_rsc_op id="dbfs_last_0" operation_key="dbfs_monitor_0" operation="monitor" transition-key="5:0:7:09952a2f-22c0-4ef5-961a-878dfbaace9b" transition-magic="0:7;5:0:7:09952a2f-22c0-4ef5-961a-878dfbaace9b" call-id="10" rc-code="7" op-status="0" interval="0"/>
+                      </lrm_resource>
+                    </lrm_resources>
+                  </lrm>
+                </node_state>
+              </status>
+            </cib>
+          </diff-removed>
+          <diff-added>
+            <cib/>
+          </diff-added>
+        </diff>
+      </cib_update_result>
+    </notify>
+
+具体的机制是： crm_mon 会顺着 notify 节点一直往下找，找到所有的 lrm_rsc_op， 然后一个一个的取出属性值
+
+1. CRM_notify_recipient是一个全局的变量，在调用的时候就已经赋值完成了，所以在这里不管它
+
+2. 从lrm 中拿出id作为 CRM_notify_node
+
+3. 从lrm_resource 中拿出 id 作为 CRM_notify_rsc
+
+4. 从lrm_rsc_op 中拿出 operation 作为 CRM_notify_task
+
+5. 从transition-magic 中 decode 出 CRM_notify_rc 和 CRM_notify_status
+
+6. 从transition-key 中 decode 出 CRM_notify_target_rc
+
+7. 将上面得到的信息set成环境变量，然后fork出子进程调用external-agent，完成用户自定义动作
+
+对于fence操作，crm_mon提供了专门的参数 watch-fencing ，可惜的是， watch-fencing 只能察觉pacemaker自己的 stonith 操作，
+
+在 Clusters from Scratch 中，为了使用集群文件系统，使用了cman作为底层的通信层
+
+为了数据安全，又将fence设置在了cman层（another blog）
+
+综上，对于fence掉节点的动作，默认的crm_mon是无法告知 external-agent 的，这无疑是通知机制中的一个硬伤
+
+我们再来看看当node2被fence掉时的 message 消息
+
+    <notify cib_object_type="node_state">
+      <cib_generation>
+        <generation_tuple/>
+      </cib_generation>
+      <cib_update>
+        <node_state id="node2" uname="node2" crmd="offline" crm-debug-origin="peer_update_callback"/>
+      </cib_update>
+      <cib_update_result>
+        <diff>
+          <diff-removed>
+            <cib>
+              <status>
+                <node_state crmd="online" crm-debug-origin="post_cache_update" id="node2"/>
+              </status>
+            </cib>
+          </diff-removed>
+          <diff-added>
+            <cib>
+              <status>
+                <node_state id="node2" uname="node2" in_ccm="false" crmd="offline" join="member" crm-debug-origin="peer_update_callback" expected="member"/>
+              </status>
+            </cib>
+          </diff-added>
+        </diff>
+      </cib_update_result>
+    </notify>
+
+ok，在 cib_object_type="node_state" 的 message 中，显示了节点上、下线的信息
+
+因为没有 lrm_rsc_op ， 所以crm_mon默认是不通知的
+
+下来我们就可以解析 cib_object_type="node_state" 时的消息，遇到 node_state 发生改变时，设置一些我们自己知道的环境变量，然后调用 external-agent 即可
+
+that's all
