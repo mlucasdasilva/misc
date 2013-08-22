@@ -1,4 +1,4 @@
-#!/usr/bin/perl -w
+#!/usr/bin/perl
 
 use Data::Dumper;
 use Getopt::Std;
@@ -44,10 +44,10 @@ sub usage
 sub print_metadata
 {
 print '<?xml version="1.0" ?>
-<resource-agent name="fence_klwang" shortdesc="klwang\'s virtualbox fence agent, work both for cman and pacemaker">
+<resource-agent name="fence_virtualbox" shortdesc="klwang\'s virtualbox fence agent, work both for cman and pacemaker">
 <longdesc>
-The style come from fence_pcmk, http://www.clusterlabs.org
-The action come from fence_vbox, nikolai.stolbovoi@libero.it
+The schema come from fence_pcmk, http://www.clusterlabs.org
+Some functions come from fence_vbox, http://code.google.com/p/fencevbox/
 </longdesc>
 <vendor-url>http://klwang.info</vendor-url>
 <parameters>
