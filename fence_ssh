@@ -1,0 +1,191 @@
+#!/bin/sh 
+
+# Script to stop and start a node for cman and pacemaker.
+# The only required argument is machinename.
+# Note:
+#        requried by configure ssh authorized_keys
+
+#eval $(cat -)
+
+SSH_COMMAND="/usr/bin/ssh -q -x -o PasswordAuthentication=no -o StrictHostKeyChecking=no -n -l root"
+REBOOT_COMMAND="echo '/sbin/reboot -nf' | SHELL=/bin/sh at now >/dev/null 2>&1"
+nodename=
+action=
+
+usage () {
+    /bin/echo "Usage: $0 -n NAME [-o ACTION]"
+    /bin/echo
+    /bin/echo " -n NODENAME"
+    /bin/echo "   The name of the node to be fenced."
+    /bin/echo "   In case it contains spaces, use double quotes."
+    /bin/echo " -o ACTION"
+    /bin/echo "   What to do; on|off|list|monitor|reboot(default)."
+    /bin/echo
+    exit 0
+}
+
+arg_cmd() {
+    while getopts ":n:p:o:h" opt; do
+        case "$opt" in
+        n|p)
+            nodename=$OPTARG
+            ;;
+        o)
+            action=$OPTARG
+            ;;
+        h)
+            action="usage"
+            ;;
+        *)
+            usage
+            ;;
+        esac
+    done
+}
+
+arg_stdin() {
+    eval $(cat -)
+    if [ "x$nodename" = "x" -a "x$port" != "x" ]; then
+        nodename=$port
+    fi
+}
+
+metadata() {
+
+    echo '''<?xml version="1.0" ?>
+<resource-agent name="fence_ssh" shortdesc="ssh fence agent, work both for cman and pacemaker">
+<longdesc>
+The style come from fence_pcmk, http://www.clusterlabs.org
+</longdesc>
+<vendor-url>http://klwang.info</vendor-url>
+<parameters>
+        <parameter name="action" unique="1">
+                <getopt mixed="-o" />
+                <content type="string" default="reboot" />
+                <shortdesc lang="en">Fencing Action</shortdesc>
+        </parameter>
+        <parameter name="nodename" unique="1">
+                <getopt mixed="-g" />
+                <content type="string"  />
+                <shortdesc lang="en">Name of machine</shortdesc>
+        </parameter>
+        <parameter name="port" unique="1">
+                <getopt mixed="-p" />
+                <content type="string"  />
+                <shortdesc lang="en">Name of machine, equal to nodename</shortdesc>
+        </parameter>
+        <parameter name="help" unique="1">
+                <getopt mixed="-h" />
+                <content type="string"  />
+                <shortdesc lang="en">Display help and exit</shortdesc>
+        </parameter>
+</parameters>
+<actions>
+        <action name="reboot" />
+        <action name="on" />
+        <action name="off" />
+        <action name="list" />
+        <action name="status" />
+        <action name="metadata" />
+</actions>
+</resource-agent>'''
+
+    exit 0
+}
+
+get_usable_ip() {
+
+    for ip in `/usr/bin/getent hosts $1 | cut -d" " -f1`; do
+        if ping -w1 -c1 $ip > /dev/null 2>&1
+        then
+            echo $ip
+            return 0
+        fi
+    done
+    return 1
+
+}
+
+is_host_up() {
+
+    for j in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15; do
+        if
+            ping -w1 -c1 "$1" >/dev/null 2>&1
+        then
+            sleep 1
+        else
+            return 1
+        fi
+    done
+    return 0
+
+}
+
+reboot() {
+
+    # for test
+    local node=`trans_host $1`
+    ip=`get_usable_ip $node`
+    if [ $? -ne 0 ];then
+        /bin/echo "Error: can not get a usable ip, is nodename($node) alive!"
+        exit 1
+    fi 
+    
+    if ! ping -c1 -w1 $ip >/dev/null 2>&1; then
+        exit 0                       # in case the node have been fenced
+    fi
+
+    $SSH_COMMAND $ip "$REBOOT_COMMAND"
+
+    if `is_host_up $ip`; then
+        exit 1
+    else
+        exit 0
+    fi
+
+}
+
+# for test
+trans_host() {
+
+    echo h${1: -1}
+    return 0
+
+}
+
+
+#main
+
+if [ $# -gt 0 ]; then
+    arg_cmd $*
+else
+    arg_stdin
+fi
+
+
+case "$action" in
+
+    metadata)
+        metadata
+        ;;
+    usage)
+        usage
+        ;;
+    on|off)
+        exit 0        # ssh can node turn on a node
+                      # so avoiding turn down it
+        ;;
+    reset|reboot)
+        reboot $nodename
+        ;;
+    monitor)
+        exit 0
+        ;;
+    help)
+        usage
+        ;; 
+    *)
+        /bin/echo "Unkonw options"
+        exit 1
+        ;;
+esac
