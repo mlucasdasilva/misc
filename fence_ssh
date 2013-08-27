@@ -1,11 +1,13 @@
 #!/bin/sh 
 
-# Script to stop and start a node for cman and pacemaker.
-# The only required argument is machinename.
+# A fence agent for cman and pacemaker, using ssh.
+# The only required argument is nodename.
+# Author:
+#        klwang (http://klwang.info)
 # Note:
-#        requried by configure ssh authorized_keys
+#        authorized_keys configuration are required
+#        just for test, enjoy it!
 
-#eval $(cat -)
 
 SSH_COMMAND="/usr/bin/ssh -q -x -o PasswordAuthentication=no -o StrictHostKeyChecking=no -n -l root"
 REBOOT_COMMAND="echo '/sbin/reboot -nf' | SHELL=/bin/sh at now >/dev/null 2>&1"
@@ -46,7 +48,7 @@ arg_cmd() {
 arg_stdin() {
     eval $(cat -)
     if [ "x$nodename" = "x" -a "x$port" != "x" ]; then
-        nodename=$port
+        nodename=$port         # pacemaker only use port
     fi
 }
 
@@ -56,8 +58,9 @@ metadata() {
 <resource-agent name="fence_ssh" shortdesc="ssh fence agent, work both for cman and pacemaker">
 <longdesc>
 The style come from fence_pcmk, http://www.clusterlabs.org
+Some functions references external/ssh agent
 </longdesc>
-<vendor-url>http://klwang.info</vendor-url>
+<vendor-url> http://klwang.info </vendor-url>
 <parameters>
         <parameter name="action" unique="1">
                 <getopt mixed="-o" />
@@ -123,7 +126,6 @@ is_host_up() {
 
 reboot() {
 
-    # for test
     local node=`trans_host $1`
     ip=`get_usable_ip $node`
     if [ $? -ne 0 ];then
@@ -145,10 +147,9 @@ reboot() {
 
 }
 
-# for test
 trans_host() {
 
-    echo h${1: -1}
+    echo "${1}-fence-ssh"
     return 0
 
 }
@@ -172,14 +173,14 @@ case "$action" in
         usage
         ;;
     on|off)
-        exit 0        # ssh can node turn on a node
+        exit 0        # ssh can not turn on a node
                       # so avoiding turn down it
         ;;
     reset|reboot)
         reboot $nodename
         ;;
     monitor)
-        exit 0
+        exit 0        # just for pacemaker
         ;;
     help)
         usage
