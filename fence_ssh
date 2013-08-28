@@ -130,7 +130,7 @@ reboot() {
     ip=`get_usable_ip $node`
     if [ $? -ne 0 ];then
         /bin/echo "Error: can not get a usable ip, is nodename($node) alive!"
-        exit 1
+        exit 0                       # in case power lose
     fi 
     
     if ! ping -c1 -w1 $ip >/dev/null 2>&1; then
