@@ -68,7 +68,7 @@ Some functions references external/ssh agent
                 <shortdesc lang="en">Fencing Action</shortdesc>
         </parameter>
         <parameter name="nodename" unique="1">
-                <getopt mixed="-g" />
+                <getopt mixed="-n" />
                 <content type="string"  />
                 <shortdesc lang="en">Name of machine</shortdesc>
         </parameter>
@@ -130,7 +130,7 @@ reboot() {
     ip=`get_usable_ip $node`
     if [ $? -ne 0 ];then
         /bin/echo "Error: can not get a usable ip, is nodename($node) alive!"
-        exit 1
+        exit 0                       # in case power lose
     fi 
     
     if ! ping -c1 -w1 $ip >/dev/null 2>&1; then
@@ -174,7 +174,7 @@ case "$action" in
         ;;
     on|off)
         exit 0        # ssh can not turn on a node
-                      # so avoiding turn down it
+                      # so avoiding turn it down
         ;;
     reset|reboot)
         reboot $nodename
