@@ -1,5 +1,12 @@
 #!/usr/bin/perl
 
+# A virtualbox fence agent for cman and pacemaker, using VBoxManage.
+# Author:
+#        klwang (http://klwang.info)
+# Note:
+#        authorized_keys configuration are required
+#        just for test, enjoy it!
+
 use Data::Dumper;
 use Getopt::Std;
 use Getopt::Long;
