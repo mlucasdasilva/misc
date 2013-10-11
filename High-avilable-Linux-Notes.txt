@@ -1,0 +1,162 @@
+去掉系统的邮件提示
+
+You have new mail in /var/spool/mail/root"
+
+echo "unset MAILCHECK" >> /etc/profile
+
+lsof -i:port
+
+查看占用port端口的程序
+
+pgrep process
+
+equal:
+    pidof process
+
+永久路由
+
+/etc/sysconfig/network-scripts/route-eth0
+
+    127.16.6.0/24 via 172.16.2.25
+
+
+管理开机自动运行的服务
+    ntsysv
+
+
+去除多余的控制台
+
+linux默认开启7个控制台，可以使用 Ctrl+Alt+Fn 来切换，有时候不需要，可以注释掉多余的控制台
+
+/etc/sysconfig/init中
+# What ttys should gettys be started on?
+ACTIVE_CONSOLES=/dev/tty[1-2]
+
+/etc/init中
+
+ttyx.conf 修改 start on 就可以
+
+noatime, nodiratime
+    读操作不更新文件的访问时间
+
+netstat -n | awk '/^tcp/ {++S[$NF]} END {for (a in S) print a, S[a]}'
+
+    统计各种状态链接的个数
+
+单用户启动系统
+
+   single / 1
+
+
+w ! sudo tee %
+
+
+tee -a 
+    追加文件
+
+
+readline
+    Ctrl + A 开头
+    Ctrl + E 结尾
+    Ctrl + L 清屏
+    Ctrl + U 剪切光标前的内容
+    Ctrl + K 剪切光标后的内容
+    Ctrl + Y 粘贴刚才删除的内容
+    Ctrl + R 搜索历史
+
+文件远程备份可以使用 ftp 非交互方式进行
+
+ftp -i -n -v << EOF
+open server
+user username passwd
+bin
+you command(put get mput...)
+bye
+EOF
+
+sendemail 命令行的邮件发送程序
+    cc 抄送
+    bcc 暗送
+sendemail -f 13521976507@163.com -xu 13521976507@163.com -xp Wq2w3e4r5 -t wklxd@qq.com -u test -m test_body -s smtp.163.com 
+
+  Required:
+    -f ADDRESS                from (sender) email address
+    * At least one recipient required via -t, -cc, or -bcc
+    * Message body required via -m, STDIN, or -o message-file=FILE
+
+  Common:
+    -t ADDRESS [ADDR ...]     to email address(es)
+    -u SUBJECT                message subject
+    -m MESSAGE                message body
+    -s SERVER[:PORT]          smtp mail relay, default is localhost:25
+
+  Optional:
+    -a   FILE [FILE ...]      file attachment(s)
+    -cc  ADDRESS [ADDR ...]   cc  email address(es)
+    -bcc ADDRESS [ADDR ...]   bcc email address(es)
+    -xu  USERNAME             username for SMTP authentication
+    -xp  PASSWORD             password for SMTP authentication
+
+  Paranormal:
+    -b BINDADDR[:PORT]        local host bind address
+            This useful for people who need to send an email from a
+            specific network interface or source address and are running sendEmail on
+            a firewall or other host with several network interfaces.
+    -l LOGFILE                log to the specified file
+    -v                        verbosity, use multiple times for greater effect
+    -q                        be quiet (i.e. no STDOUT output)
+    -o NAME=VALUE             advanced options, for details try: --help misc
+        -o message-content-type=<auto|text|html>
+        -o message-file=FILE         -o message-format=raw
+        -o message-header=HEADER     -o message-charset=CHARSET
+        -o reply-to=ADDRESS          -o timeout=SECONDS
+        -o username=USERNAME         -o password=PASSWORD
+        -o tls=<auto|yes|no>         -o fqdn=FQDN
+
+自动添加用户功能ok
+    echo kingbase| passwd --stdin kingbase
+
+
+安全：
+    修改 ssh 的监听端口号
+    将多次试探登录主机的ip加入host.deny文件
+
+确定机器mac地址
+    arping -I device(eth0) ipaddr -c 1  (向机器发送一个arp包)
+    arp -a 查看本地的arp缓存即可
+    
+
+个人无敌防火墙
+
+iptables -F
+iptables -P INPUT DROP  （默认进来的drop）
+iptables -A INPUT -m multiport -p tcp --dport 22 -j ACCEPT （允许22的tcp）
+iptables -A INPUT -m state --state RELATED,ESTABLISHED -j ACCEPT  (允许进来的已经连的包，即我主动链接的别人)
+
+
+快速拒绝 54321 的访问
+iptables -A INPUT -p tcp --dport 54321 -j REJECT
+
+可以定期分析 /var/log/secure 文件，看登录失败的 ip， 写入 /etc/hosts.deny 文件【为什么不写入hosts.allow】文件呢
+
+
+Iptraf  即使查看网络流量
+ntop    web方式的网络流量监控分析
+
+
+tcmalloc    google的malloc，提高内存分配性能
+
+
+rsync 文件同步
+    可以实现基于触发事件的同步
+
+
+csync
+    跨系统的异步文件同步工具（用户实现）
+
+inotify
+    文件修改监控的异步报告工具
+    系统级别，自己的修改自己知道，别人不知道（本机）
+
+iwatch
+    目录文件实时监控(access,modify,delete，open所有的...)
