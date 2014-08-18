@@ -1,0 +1,734 @@
+#!/bin/bash
+
+# a tool help to control pgxc cluster
+
+core=n
+install_dir="/home/postgres/pgxc"
+data_dir="/home/postgres/data5"
+archive_dir="/home/postgres/archive5"
+
+# address 
+gtm_ip="10.0.1.207"
+dn1_ip="10.0.1.208"
+dn2_ip="10.0.1.209"
+co1_ip="10.0.1.101"
+co2_ip="10.0.1.107"
+
+# node name 
+node1="redhat-1"
+node2="redhat-2"
+node3="redhat-3"
+node4="redhat-4"
+node5="redhat-5"
+node6="redhat-6"
+node7="redhat-7"
+
+# seperate by ,
+network_auth="10.0.1.0,10.0.0.0,192.168.11.0"
+network_rep="10.0.1.0,10.0.0.0,192.168.11.0"
+netmask="24"
+netcard="eth2"
+
+ssh="ssh -o PasswordAuthentication=no -o StrictHostKeyChecking=no"
+wal_keep=20
+myname="/home/postgres/cluster"
+
+check_and_set_ip(){
+    if ping -W 1 -c 1 $1 &> /dev/null ; then
+        xnode=$(hostname)
+        ynode=$(ssh -o PasswordAuthentication=no -o StrictHostKeyChecking=no $1 hostname)
+
+        if [ "x$xnode" != "x$ynode" ]; then
+            cmd=${FUNCNAME[1]/up/down}
+            $ssh root@$ynode "$myname $cmd"
+        fi
+    fi
+}
+
+dn1_ip_up(){
+    # check local hostname and register to coordinator
+    while true; do
+        localname=$(psql -p 45001 -Atc "show pgxc_node_name;" 2>&1)
+        if [ "x$localname" = "xdn1" ];then
+            if nc -z $node1 35000 &> /dev/null; then
+                $ssh $node7 "$myname switch_dn dn1 `hostname`"
+            fi
+            if nc -z $node7 35000 &> /dev/null; then
+                $ssh $node1 "$myname switch_dn dn1 `hostname`"
+            fi
+            break
+        elif echo $localname | grep -q "is starting up"; then 
+            sleep 1
+        fi
+    done
+}
+
+dn2_ip_up(){
+    # check local hostname and register to coordinator
+    localname=$(psql -p 45002 -Atc "show pgxc_node_name;" 2>&1)
+    case $localname in
+        "dn2")
+            if nc -z $node1 35000 &> /dev/null; then
+                $ssh $node7 "$myname switch_dn dn2 `hostname`"
+            fi
+            if nc -z $node7 35000 &> /dev/null; then
+                $ssh $node1 "$myname switch_dn dn2 `hostname`"
+            fi
+        ;;
+        *)
+        echo "only dn2 support this function"
+        ;;
+   esac
+}
+
+dn1_ip_down(){
+    $ssh root@localhost "ifconfig $netcard:dn1 down"
+}
+
+dn2_ip_down(){
+    $ssh root@localhost "ifconfig $netcard:dn2 down"
+}
+
+gtm_ip_up(){
+    check_and_set_ip $gtm_ip
+    $ssh root@localhost "ifconfig $netcard:gtm $gtm_ip/$netmask up"
+}
+
+gtm_ip_down(){
+    $ssh root@localhost "ifconfig $netcard:gtm down"
+}
+
+check_ip(){
+    if ping -W 1 -c 1 $1 &> /dev/null ; then
+        xnode=$(hostname)
+        ynode=$($ssh $1 hostname)
+
+        if [ "x$xnode" != "x$ynode" ]; then
+            return 1
+        else
+            return 0
+        fi
+    else
+        return 1
+    fi
+}
+
+make_dir(){
+    [ -d $data_dir ] || mkdir -p $data_dir
+    [ -d $data_dir/log ] || mkdir -p $data_dir/log
+    [ -d $archive_dir ] || mkdir -p $archive_dir
+}
+
+gtm_master(){
+    rm -f $data_dir/gtm/register.node
+    gtm_ctl start -Z gtm -D $data_dir/gtm -l $data_dir/log/gtm.log -o '-p 8888 -n `hostname`'
+    $ssh root@`hostname` $myname gtm_ip_up
+}
+
+gtm_slave(){
+    gtm_ctl start -Z gtm -D $data_dir/gtm -l $data_dir/log/gtm.log -o '-s -i '$gtm_ip' -q 8888 -p 8888 -n `hostname`'
+}
+
+gtm_promote(){
+    gtm_ctl promote -Z gtm -D $data_dir/gtm -l $data_dir/log/gtm.log -o '-p 8888 -n `hostname`'
+    $ssh root@`hostname` $myname gtm_ip_up
+}
+
+gtm_stop(){
+    gtm_ctl stop -W -Z gtm -D $data_dir/gtm  
+}
+
+co_start(){
+    pg_ctl start -Z coordinator -D $data_dir/co -l $data_dir/log/coordinator.log
+}
+
+co_stop(){
+    pg_ctl stop -Z coordinator -D $data_dir/co -m fast
+}
+
+dn1_master(){
+    rm -f $data_dir/dn1/recovery.conf
+    sed -i "s%^include '$data_dir%#include '$data_dir%g" $data_dir/dn1/postgresql.conf
+    pg_ctl start -Z datanode -D $data_dir/dn1 -l $data_dir/log/pgsql_dn1.log
+    sleep 3
+    dn1_ip_up
+}
+
+dn1_restart(){
+    pg_ctl restart -Z datanode -D $data_dir/dn1 -l $data_dir/log/pgsql_dn1.log -m fast
+}
+
+dn2_restart(){
+    pg_ctl restart -Z datanode -D $data_dir/dn2 -l $data_dir/log/pgsql_dn2.log -m fast
+}
+
+dn1_promote(){
+    sed -i "s%^include '$data_dir%#include '$data_dir%g" $data_dir/dn1/postgresql.conf
+    pg_ctl promote -Z datanode -D $data_dir/dn1
+    pg_ctl restart -Z datanode -D $data_dir/dn1 -l $data_dir/log/pgsql_dn1.log
+    sleep 2
+    dn1_ip_up
+}
+
+dn2_promote(){
+    sed -i "s%^include '$data_dir%#include '$data_dir%g" $data_dir/dn2/postgresql.conf
+    pg_ctl promote -Z datanode -D $data_dir/dn2
+    pg_ctl restart -Z datanode -D $data_dir/dn2 -l $data_dir/log/pgsql_dn2.log
+    sleep 2
+    dn2_ip_up
+}
+
+dn1_sync(){
+    if [ -z $1 ]; then
+        echo "nodename should be set"
+        return 1
+    fi
+
+    echo "synchronous_standby_names = '$1'" > $data_dir/dn1/rep_mode.conf
+    sed -i "s%^#include '$data_dir%include '$data_dir%g" $data_dir/dn1/postgresql.conf
+    pg_ctl reload -Z datanode -D $data_dir/dn1
+}
+
+dn1_async(){
+    echo "synchronous_standby_names = ''" > $data_dir/dn1/rep_mode.conf
+    sed -i "s%^#include '$data_dir%include '$data_dir%g" $data_dir/dn1/postgresql.conf
+    pg_ctl reload -Z datanode -D $data_dir/dn1
+}
+
+dn2_sync(){
+    if [ -z $1 ]; then
+        echo "nodename should be set"
+        return 1
+    fi
+
+    echo "synchronous_standby_names = '$1'" > $data_dir/dn2/rep_mode.conf
+    sed -i "s%^#include '$data_dir%include '$data_dir%g" $data_dir/dn2/postgresql.conf
+    pg_ctl reload -Z datanode -D $data_dir/dn2
+}
+
+dn2_async(){
+    echo "synchronous_standby_names = ''" > $data_dir/dn2/rep_mode.conf
+    sed -i "s%^#include '$data_dir%include '$data_dir%g" $data_dir/dn2/postgresql.conf
+    pg_ctl reload -Z datanode -D $data_dir/dn2
+}
+
+dn2_master(){
+    rm -f $data_dir/dn2/recovery.conf
+    sed -i "s%^include '$data_dir%#include '$data_dir%g" $data_dir/dn2/postgresql.conf
+    pg_ctl start -Z datanode -D $data_dir/dn2 -l $data_dir/log/pgsql_dn2.log
+    sleep 2
+    dn2_ip_up
+}
+
+dn1_slave(){
+    if [ -z $1 ]; then
+        echo "master nodename should be set"
+        return 1
+    fi
+
+    cat << EOF > $data_dir/dn1/recovery.conf
+standby_mode = 'on'
+primary_conninfo = 'host=$1 port=45001 user=postgres application_name=`hostname`'
+EOF
+    pg_ctl start -Z datanode -D $data_dir/dn1 -l $data_dir/log/pgsql_dn1.log
+}
+
+dn2_slave(){
+    if [ -z $1 ]; then
+        echo "master nodename should be set"
+        return 1
+    fi
+
+    cat << EOF > $data_dir/dn2/recovery.conf
+standby_mode = 'on'
+primary_conninfo = 'host=$1 port=45002 user=postgres application_name=`hostname`'
+EOF
+    pg_ctl start -Z datanode -D $data_dir/dn2 -l $data_dir/log/pgsql_dn2.log
+}
+
+dn1_stop(){
+    pg_ctl stop -Z datanode -D $data_dir/dn1 -m fast
+}
+
+dn2_stop(){
+    pg_ctl stop -Z datanode -D $data_dir/dn2 -m fast
+}
+
+switch_dn(){
+    if [ $# -ne 2 ]; then
+        echo "dn and hostname shuold be set"
+        return 1
+    fi
+
+    case $1 in
+        "dn1"|"dn2")
+           if ping -W 1 -c 1 $2 &> /dev/null; then
+               psql -p 35000 -c "alter node $1 with(host='$2'); select pgxc_pool_reload();" &> /dev/null
+           fi
+        ;;
+        *)
+            echo "only datanode support"
+        ;;
+    esac
+
+}
+
+drop_co(){
+    if [ -z $1 ]; then
+        echo "co name should be set"
+        return 1
+    fi
+
+    case $1 in
+       "co1"|"co2")
+           psql -p 35000 -c "drop node $1; select pgxc_pool_reload();" &> /dev/null
+       ;;
+       *)
+           echo "only co1 and co2 support"
+       ;;
+    esac
+}
+
+co_sql(){
+    psql -p35000 poc
+}
+
+dn1_sql(){
+    psql -p45001 poc
+}
+
+dn2_sql(){
+    psql -p45002 poc
+}
+
+tree_kill(){
+    if [ -z $1 ]; then
+        echo "ppid should be set"
+        return 1
+    fi
+
+    pkill -9 -P $1
+    kill -9 $1
+}
+
+kill_node(){
+    if [ -z $1 ]; then
+        echo "nodename should be set"
+        return 1
+    fi
+    case $1 in
+        "dn1"|"dn2")
+            pid=$(head -n1 $data_dir/$1/postmaster.pid)
+            tree_kill $pid
+            ;;
+        "co")
+            localname=$(psql -p 35000 -Atc "show pgxc_node_name;")
+            case $localname in
+                "co1")
+                    if ping -W 1 -c 1 $node7 &> /dev/null; then
+                        $ssh $node7 "$myname drop_co co1"
+                    fi
+                ;;
+                "co2")
+                    if ping -W 1 -c 1 $node7 &> /dev/null; then
+                        $ssh $node1 "$myname drop_co co2"
+                    fi
+                ;;
+                *)
+                echo "only $node1 and $node7 support this function"
+                ;;
+            esac
+
+            pid=$(head -n1 $data_dir/co/postmaster.pid)
+            tree_kill $pid
+            ;;
+        "gtm")
+            pid=$(head -n1 $data_dir/gtm/gtm.pid)
+            tree_kill $pid
+            ;;
+        *)
+            echo "only dn1 dn2 co support"
+            ;;
+    esac
+}
+
+check_gtm() {
+    if ping -c $gtm_ip &> /dev/null; then
+        echo "ip $gtm_ip does't exist";
+        exit 1;
+    fi
+}
+
+init_gtm(){
+    #for gtm
+    killall -9 gtm &>/dev/null
+    rm -rf $data_dir/gtm
+    initgtm -Z gtm -D $data_dir/gtm &> /dev/null
+    gtm_master
+    return $?
+}
+
+init_gtm_s(){
+    #for gtm standby
+    rm -fr $data_dir/gtm
+    initgtm -Z gtm -D $data_dir/gtm &> /dev/null
+}
+
+init_dn1(){
+    # dn1
+    rm -fr $data_dir/dn1/
+    [ -d $archive_dir/dn1 ] || mkdir -p $archive_dir/dn1
+    rm -fr $archive_dir/dn1/*
+    initdb --locale=C --auth-local=trust --auth-host=trust -k --nodename dn1 -D $data_dir/dn1 &> /dev/null
+
+    if [ $? -ne 0 ]; then
+        echo "init_dn1 failed"
+        exit 1
+    fi
+    # for postgresql.conf
+    cat << EOF >> $data_dir/dn1/postgresql.conf
+listen_addresses = '*'
+port = 45001
+gtm_host = '$gtm_ip'
+gtm_port = 8888
+hot_standby = on
+wal_level = hot_standby
+archive_mode = on
+wal_keep_segments = $wal_keep
+archive_command = 'cp %p $archive_dir/dn1/%f'
+max_wal_senders = 5
+max_prepared_transactions = 100
+include '$data_dir/dn1/rep_mode.conf' # added by pgsql RA
+EOF
+
+   touch $data_dir/dn1/rep_mode.conf
+
+   # for pg_hba.conf
+   for net in `echo $network_auth | sed 's/,/ /g'`; do
+       echo "host    all             all             $net/$netmask             trust" >> $data_dir/dn1/pg_hba.conf
+   done
+   for net in `echo $network_rep | sed 's/,/ /g'`; do
+       echo "host    replication     postgres        $net/$netmask             trust" >> $data_dir/dn1/pg_hba.conf
+   done
+
+}
+
+init_dn1_s(){
+    if [ -z $1 ]; then
+        echo "master nodename should be set"
+        return 1
+    fi
+
+    rm -fr $data_dir/dn1/
+    [ -d $archive_dir/dn1 ] || mkdir -p $archive_dir/dn1
+    rm -fr $archive_dir/dn1/*
+    pg_basebackup -h $1 -p45001 -X stream -D $data_dir/dn1 -P
+}
+
+recovery_dn1(){
+    if [ -z $1 ]; then
+        echo "master nodename should be set"
+        return 1
+    fi
+
+    init_dn1_s $1 
+    dn1_slave $1
+}
+
+recovery_co(){
+    if [ -z $1 ]; then
+        echo "master nodename should be set"
+        return 1
+    fi
+
+    rm -fr $data_dir/co/
+    [ -d $archive_dir/co ] || mkdir -p $archive_dir/co
+    rm -fr $archive_dir/co/*
+    pg_basebackup -h $1 -p35000 -X stream -D $data_dir/co -P
+    mastername=$(grep pgxc_node_name $data_dir/co/postgresql.conf | awk -F"'" '{print $2}')
+    case $mastername in
+        "co1")
+            sed -i "s%pgxc_node_name = .*%pgxc_node_name = 'co2'%g" $data_dir/co/postgresql.conf
+        ;;
+        "co2")
+            sed -i "s%pgxc_node_name = .*%pgxc_node_name = 'co1'%g" $data_dir/co/postgresql.conf
+        ;;
+    esac
+
+    co_start
+    # waiting for start
+    sleep 3
+
+    case $mastername in
+        "co1")
+            # local
+            psql -p 35000 -c "create node co2 with(host='`hostname`', port=35000, type = 'coordinator'); \
+                     select pgxc_pool_reload();" &> /dev/null
+            # remote
+            psql -h $1 -p 35000 -c "create node co2 with(host='`hostname`', port=35000, type = 'coordinator'); \
+                     select pgxc_pool_reload();" &> /dev/null
+        ;;
+        "co2")
+            # local
+            psql -p 35000 -c "create node co1 with(host='`hostname`', port=35000, type = 'coordinator'); \
+                     select pgxc_pool_reload();" &> /dev/null
+            # remote
+            psql -h $1 -p 35000 -c "create node co1 with(host='`hostname`', port=35000, type = 'coordinator'); \
+                     select pgxc_pool_reload();" &> /dev/null
+        ;;
+    esac
+    ## todo replace nodename here
+}
+
+init_dn2(){
+    # dn2 
+    # cp $data_dir/dn2/postgresql.conf $data_dir/dn2/pg_hba.conf .
+    rm -fr $data_dir/dn2/
+    [ -d $archive_dir/dn2 ] || mkdir -p $archive_dir/dn2
+    rm -fr $archive_dir/dn2/*
+    initdb --locale=C --auth-local=trust --auth-host=trust -k --nodename dn2 -D $data_dir/dn2 &> /dev/null
+    if [ $? -ne 0 ]; then
+        init_dn2 $1 failed
+        exit 1
+    fi
+
+    # mv postgresql.conf pg_hba.conf $data_dir/dn2/
+    # for postgresql.conf
+    cat << EOF >> $data_dir/dn2/postgresql.conf
+listen_addresses = '*'
+port = 45002
+gtm_host = '$gtm_ip'
+gtm_port = 8888
+hot_standby = on
+wal_level = hot_standby
+wal_keep_segments = $wal_keep
+archive_mode = on
+archive_command = 'cp %p $archive_dir/dn2/%f'
+max_wal_senders = 5
+max_prepared_transactions = 100
+include '$data_dir/dn2/rep_mode.conf'
+EOF
+
+   touch $data_dir/dn2/rep_mode.conf
+
+   # for pg_hba.conf
+   for net in `echo $network_auth | sed 's/,/ /g'`; do
+       echo "host    all             all             $net/$netmask             trust" >> $data_dir/dn2/pg_hba.conf
+   done
+   for net in `echo $network_rep | sed 's/,/ /g'`; do
+       echo "host    replication     postgres        $net/$netmask             trust" >> $data_dir/dn2/pg_hba.conf
+   done
+
+}
+
+init_dn2_s(){
+    if [ -z $1 ]; then
+        echo "master nodename should be set"
+        return 1
+    fi
+
+    rm -fr $data_dir/dn2/
+    [ -d $archive_dir/dn2 ] || mkdir -p $archive_dir/dn2
+    rm -fr $archive_dir/dn2/*
+    pg_basebackup -h $1 -p45002 -X stream -D $data_dir/dn2 -P
+}
+
+init_co(){
+    if [ -z $1 ]; then
+        echo "coordinator nodename should be set"
+        return 1
+    fi
+
+    # co1
+    rm -fr $data_dir/co/
+    [ -d $archive_dir/co ] || mkdir -p $archive_dir/co
+    initdb --locale=C --auth-local=trust --auth-host=trust --nodename $1 -D $data_dir/co &> /dev/null
+    if [ $? -ne 0 ]; then
+        init_co $1 failed
+        exit 1
+    fi
+
+    # for postgresql.conf
+    cat << EOF >> $data_dir/co/postgresql.conf
+listen_addresses = '*'
+port = 35000
+gtm_host = '$gtm_ip'
+gtm_port = 8888
+hot_standby = on
+wal_level = hot_standby
+wal_keep_segments = $wal_keep
+archive_mode = on
+archive_command = 'cp %p $archive_dir/co/%f'
+max_wal_senders = 5
+EOF
+
+   # for pg_hba.conf
+   for net in `echo $network_auth | sed 's/,/ /g'`; do
+       echo "host    all             all             $net/$netmask             trust" >> $data_dir/co/pg_hba.conf
+   done
+   for net in `echo $network_rep | sed 's/,/ /g'`; do
+       echo "host    replication     postgres        $net/$netmask             trust" >> $data_dir/co/pg_hba.conf
+   done
+
+    pg_ctl start -W -Z coordinator -D $data_dir/co -l $data_dir/log/coordinator.log
+    sleep 2
+
+    case $1 in
+        "co1")
+            psql -p35000 -c "create node dn1 with(host='$node5', port=45001, type = 'datanode'); \
+                create node dn2 with(host='$node2', port=45002, type = 'datanode'); \
+                create node co2 with(host='$node7', port=35000, type = 'coordinator'); \
+                alter node co1 with(host='$node1', port=35000);"
+        ;;
+        "co2")
+            psql -p35000 -c "create node dn1 with(host='$node5', port=45001, type = 'datanode'); \
+                create node dn2 with(host='$node2', port=45002, type = 'datanode'); \
+                create node co1 with(host='$node1', port=35000, type = 'coordinator'); \
+                alter node co2 with(host='$node7', port=35000);" 
+        ;;
+    esac
+
+    pg_ctl stop -Z coordinator -D $data_dir/co
+}
+
+build_table(){
+    psql -p 35000 -c "create database poc"
+    cat << EOF > $data_dir/log/define.sql
+CREATE TABLE jaf_at_notice (
+    noticeid numeric(10) NOT NULL,
+    catalog character varying(25),
+    title character varying(128) NOT NULL,
+    status character varying(25),
+    startdate date,
+    enddate date,
+    context character varying(1024),
+    pubunion character varying(10),
+    operatorid numeric(10),
+    createdate date,
+    lastupdate date,
+    updator numeric(10),
+    field1 character varying(255),
+    field2 character varying(255),
+    field3 character varying(255),
+    field4 character varying(255),
+    field5 character varying(255)
+)
+DISTRIBUTE BY HASH (noticeid)
+TO node (dn1);
+
+
+CREATE TABLE jaf_at_notice_scope (
+    noticeid numeric(10) NOT NULL,
+    destid numeric(10),
+    desttype character varying(25),
+    orgtreeid character varying(10),
+    field1 character varying(255),
+    field2 character varying(255),
+    field3 character varying(255),
+    field4 character varying(255),
+    field5 character varying(255)
+)
+DISTRIBUTE BY HASH (noticeid)
+TO node (dn2);
+
+ALTER TABLE ONLY jaf_at_notice
+    ADD CONSTRAINT jaf_at_notice_pkey PRIMARY KEY (noticeid);
+EOF
+    psql -p 35000 poc < $data_dir/log/define.sql
+    rm -f $data_dir/log/define.sql
+}
+
+init_cluster(){
+
+    $ssh $node1 "$myname make_dir"
+    $ssh $node2 "$myname make_dir"
+    $ssh $node3 "$myname make_dir"
+    $ssh $node4 "$myname make_dir"
+    $ssh $node5 "$myname make_dir"
+    $ssh $node6 "$myname make_dir"
+    $ssh $node7 "$myname make_dir"
+
+    # gtm 
+    $ssh $node3 "$myname init_gtm"
+
+    # gtm_standby
+    $ssh $node4 "$myname init_gtm_s"
+
+    # dn1
+    $ssh $node5 "$myname init_dn1"
+    $ssh $node5 "$myname dn1_master"
+    $ssh $node6 "$myname init_dn1_s $node5"
+    $ssh $node5 "$myname dn1_stop"
+
+    # dn2
+    $ssh $node2 "$myname init_dn2"
+    $ssh $node2 "$myname dn2_master"
+    $ssh $node1 "$myname init_dn2_s $node2"
+    $ssh $node2 "$myname dn2_stop"
+
+    # coordinator
+    $ssh $node1 "$myname init_co co1"
+    $ssh $node7 "$myname init_co co2"
+
+    # stop
+    $ssh $node3 "$myname gtm_stop"
+}
+
+stop_cluster(){
+
+    # dn1
+    $ssh $node6 "$myname dn1_stop"
+    $ssh $node5 "$myname dn1_stop"
+    # dn 2
+    $ssh $node1 "$myname dn2_stop"
+    $ssh $node2 "$myname dn2_stop"
+    # coordinator
+    $ssh $node1 "$myname co_stop"
+    $ssh $node7 "$myname co_stop"
+    # gtm
+    $ssh $node4 "$myname gtm_stop"
+    $ssh $node3 "$myname gtm_stop"
+}
+
+start_cluster(){
+
+    # gtm
+    $ssh $node3 "$myname gtm_master"
+    $ssh $node4 "$myname gtm_slave"
+    # coordinator
+    $ssh $node1 "$myname co_start"
+    $ssh $node7 "$myname co_start"
+    # dn1
+    $ssh $node5 "$myname dn1_master"
+    $ssh $node6 "$myname dn1_slave $node5"
+    $ssh $node5 "$myname dn1_sync $node6"
+    # dn 2
+    $ssh $node2 "$myname dn2_master"
+    $ssh $node1 "$myname dn2_slave $node2"
+    $ssh $node2 "$myname dn2_sync $node1"
+}
+
+do_command(){
+    if typeset -F | grep -w -q $1; then
+        cmd=$1
+        shift
+        eval "$cmd $@"
+        if [ $? -eq 0 ]; then
+            echo "$cmd ok"
+        else
+            echo "$cmd fail"
+        fi
+    else
+        echo "$1: function not exist!"
+    fi
+    
+}
+
+## main
+export LD_LIBRARY_PATH=$install_dir/lib
+export PATH=$install_dir/bin:$PATH
+
+if [ "x$core" = "xy" ]; then
+    ulimit -c unlimited
+fi
+do_command $@

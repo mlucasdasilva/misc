@@ -12,7 +12,7 @@
 SSH_COMMAND="/usr/bin/ssh -q -x -o PasswordAuthentication=no -o StrictHostKeyChecking=no -n -l root"
 REBOOT_COMMAND="echo '/sbin/reboot -nf' | SHELL=/bin/sh at now >/dev/null 2>&1"
 nodename=
-action=
+action=reboot
 
 usage () {
     /bin/echo "Usage: $0 -n NAME [-o ACTION]"

@@ -21,7 +21,7 @@ tidyEndBlankLine(){
 
 tidySpanceBeforeTab(){
     pattern="space before tab in indent."
-    func='s/ *\t/\t/g'
+    func='s/\t/    /g'
 
     for file in `grep "$pattern" $1 | awk -F':' '{print $1}' | uniq`; do
         sed -i "$func" $file
